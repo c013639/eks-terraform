@@ -8,3 +8,5 @@ variable "vpc_subnets_private" {
 variable "eks_ami_account_id" {
 	type = list
 }
+
+variable "cluster_name" {}

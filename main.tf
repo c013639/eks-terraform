@@ -21,7 +21,7 @@ data "aws_availability_zones" "available" {
 }
 
 locals {
-  cluster_name = "my-cluster"
+  cluster_name = var.cluster_name
 }
 
 data "aws_ami" "eks-worker-ami" {
@@ -39,12 +39,19 @@ data "aws_ami" "eks-worker-ami" {
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "17.22.0"
-
+  cluster_enabled_log_types            = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
+  cluster_endpoint_private_access      = true
+  cluster_endpoint_public_access      = true
   cluster_name    = "${local.cluster_name}"
   cluster_version = "1.18"
   subnets         = var.vpc_subnets_private
 
   vpc_id          = var.vpc_id
+  
+  tags = {
+    "k8s.io/cluster-autoscaler/${local.cluster_name}" = "owned"
+    "k8s.io/cluster-autoscaler/enabled"             = "true"
+  }
   worker_groups = [
     {
 	  name                          = "worker-group-1"

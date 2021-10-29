@@ -1,4 +1,5 @@
-vpc_id="vpc-0220ad75b92f0e757"
-vpc_subnets_private=["subnet-0ce20dcc8880b5604","subnet-0536128b2f4e87845"]
+vpc_id="vpc-0d788ac3f59e082e8"
+vpc_subnets_private=["subnet-05161d3149da4bb8f","subnet-0884247dda5a96c81"]
 worker_node_ami=["eks-worker-node"]
 eks_ami_account_id=["self"]
+cluster_name="dev-eks-workload"
