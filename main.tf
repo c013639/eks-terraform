@@ -24,6 +24,14 @@ locals {
   cluster_name = var.cluster_name
 }
 
+locals {
+  tf-eks-node-userdata = <<USERDATA
+#!/bin/bash
+set -o xtrace
+/etc/eks/bootstrap.sh --apiserver-endpoint 'data.aws_eks_cluster.cluster.endpoint' --b64-cluster-ca 'data.aws_eks_cluster.cluster.certificate_authority.0.data' '${local.cluster_name}'
+USERDATA
+}
+
 data "aws_ami" "eks-worker-ami" {
   filter {
     name   = "name"
@@ -45,7 +53,8 @@ module "eks" {
   cluster_name    = "${local.cluster_name}"
   cluster_version = "1.18"
   subnets         = var.vpc_subnets_private
-
+  #cluster_endpoint_public_access_cidrs = var.cluster_endpoint_public_access_cidrs
+  worker_create_security_group         = true
   vpc_id          = var.vpc_id
   
   tags = {
@@ -57,7 +66,7 @@ module "eks" {
 	  name                          = "worker-group-1"
       instance_type                 = "t3.small"
 	  ami_id                        = data.aws_ami.eks-worker-ami.id
-      additional_userdata           = "echo place here"
+      additional_userdata           = "$(local.tf-eks-node-userdata)"
       asg_desired_capacity          = 2
       additional_security_group_ids = [aws_security_group.worker_group_mgmt_one.id]
       asg_max_size  = 3

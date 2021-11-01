@@ -10,3 +10,4 @@ variable "eks_ami_account_id" {
 }
 
 variable "cluster_name" {}
+
