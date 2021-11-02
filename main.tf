@@ -1,3 +1,11 @@
+terraform {
+  required_providers {
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = ">= 2.0"
+    }
+  }
+}
 provider "aws" {
   region = "us-east-1"
 }
@@ -14,7 +22,6 @@ provider "kubernetes" {
   host                   = data.aws_eks_cluster.cluster.endpoint
   cluster_ca_certificate = base64decode(data.aws_eks_cluster.cluster.certificate_authority.0.data)
   token                  = data.aws_eks_cluster_auth.cluster.token
-  load_config_file       = false
 }
 
 data "aws_availability_zones" "available" {
@@ -51,11 +58,13 @@ module "eks" {
   cluster_endpoint_private_access      = true
   cluster_endpoint_public_access      = true
   cluster_name    = "${local.cluster_name}"
-  cluster_version = "1.18"
+  cluster_version = "1.21"
   subnets         = var.vpc_subnets_private
   #cluster_endpoint_public_access_cidrs = var.cluster_endpoint_public_access_cidrs
   worker_create_security_group         = true
   vpc_id          = var.vpc_id
+  enable_irsa = true
+
   
   tags = {
     "k8s.io/cluster-autoscaler/${local.cluster_name}" = "owned"
@@ -69,7 +78,7 @@ module "eks" {
       additional_userdata           = "$(local.tf-eks-node-userdata)"
       asg_desired_capacity          = 2
       additional_security_group_ids = [aws_security_group.worker_group_mgmt_one.id]
-      asg_max_size  = 3
+      asg_max_size  = 4
     }
   ]	
   write_kubeconfig   = true
