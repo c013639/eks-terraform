@@ -27,45 +27,6 @@ provider "kubernetes" {
 
 data "aws_region" "current" {}
 
-resource "helm_release" "cluster-autoscaler" {
-  depends_on = [
-    module.eks
-  ]
-
-  name             = "cluster-autoscaler"
-  namespace        = local.k8s_service_account_namespace
-  repository       = "https://kubernetes.github.io/autoscaler"
-  chart            = "cluster-autoscaler"
-  version          = "9.10.7"
-  create_namespace = false
-
-  set {
-    name  = "awsRegion"
-    value = data.aws_region.current.name
-  }
-  set {
-    name  = "rbac.serviceAccount.name"
-    value = local.k8s_service_account_name
-  }
-  set {
-    name  = "rbac.serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
-    value = module.irsa.iam_role_arn
-    type  = "string"
-  }
-  set {
-    name  = "autoDiscovery.clusterName"
-    value = local.name
-  }
-  set {
-    name  = "autoDiscovery.enabled"
-    value = "true"
-  }
-  set {
-    name  = "rbac.create"
-    value = "true"
-  }
-}
-
 
 
 data "aws_eks_cluster" "cluster" {
@@ -88,7 +49,7 @@ locals {
   tf-eks-node-userdata = <<USERDATA
 #!/bin/bash
 set -o xtrace
-/etc/eks/bootstrap.sh --apiserver-endpoint 'data.aws_eks_cluster.cluster.endpoint' --b64-cluster-ca 'data.aws_eks_cluster.cluster.certificate_authority.0.data' '${local.cluster_name}'
+/etc/eks/bootstrap.sh --apiserver-endpoint 'data.aws_eks_cluster.cluster.endpoint' --b64-cluster-ca 'data.aws_eks_cluster.cluster.certificate_authority.0.data' --kubelet-extra-args "--node-labels=env=dev --register-with-taints=env=dev:NoSchedule" '${local.cluster_name}'
 USERDATA
 }
 
@@ -102,14 +63,9 @@ data "aws_ami" "eks-worker-ami" {
   owners      = var.eks_ami_account_id # Amazon EKS AMI Account ID
 }
 
-resource "aws_iam_policy" "cluster_autoscaler" {
-  name_prefix = "cluster-autoscaler"
-  description = "EKS cluster-autoscaler policy for cluster ${module.eks.cluster_id}"
-  policy      = data.aws_iam_policy_document.cluster_autoscaler.json
-}
 
 locals {
-  name            = var.cluster_name
+  name                          = var.cluster_name
   k8s_service_account_namespace = "kube-system"
   k8s_service_account_name      = "cluster-autoscaler-aws"
 }
@@ -140,77 +96,25 @@ module "eks" {
 	  ami_id                        = data.aws_ami.eks-worker-ami.id
       additional_userdata           = "$(local.tf-eks-node-userdata)"
       asg_desired_capacity          = 2
-      additional_security_group_ids = [aws_security_group.worker_group_mgmt_one.id]
+      additional_security_group_ids = [module.security_group.security_group_id]
       asg_max_size  = 4
     }
   ]	
   write_kubeconfig   = true
 }
 
-module "irsa" {
+module "irsa" { 
   source                        = "./modules/irsa"
   create_role                   = true
   role_name                     = "cluster-autoscaler"
   provider_url                  = replace(module.eks.cluster_oidc_issuer_url, "https://", "")
-  role_policy_arns              = [aws_iam_policy.cluster_autoscaler.arn]
+  cluster_id                    = module.eks.cluster_id
+  cluster_name                  = var.cluster_name
   oidc_fully_qualified_subjects = ["system:serviceaccount:${local.k8s_service_account_namespace}:${local.k8s_service_account_name}"]
 
 }
 
-resource "aws_security_group" "worker_group_mgmt_one" {
-  name_prefix = "worker_group_mgmt_one"
-  vpc_id      = var.vpc_id
-
-  ingress {
-    from_port = 22
-    to_port   = 22
-    protocol  = "tcp"
-
-    cidr_blocks = [
-      "10.0.0.0/8",
-    ]
-  }
+module "security_group" {
+  source                        = "./modules/security_group"
+  vpc_id                        = var.vpc_id
 }
-
-data "aws_iam_policy_document" "cluster_autoscaler" {
-  statement {
-    sid    = "clusterAutoscalerAll"
-    effect = "Allow"
-
-    actions = [
-      "autoscaling:DescribeAutoScalingGroups",
-      "autoscaling:DescribeAutoScalingInstances",
-      "autoscaling:DescribeLaunchConfigurations",
-      "autoscaling:DescribeTags",
-      "ec2:DescribeLaunchTemplateVersions",
-    ]
-
-    resources = ["*"]
-  }
-
-  statement {
-    sid    = "clusterAutoscalerOwn"
-    effect = "Allow"
-
-    actions = [
-      "autoscaling:SetDesiredCapacity",
-      "autoscaling:TerminateInstanceInAutoScalingGroup",
-      "autoscaling:UpdateAutoScalingGroup",
-    ]
-
-    resources = ["*"]
-
-    condition {
-      test     = "StringEquals"
-      variable = "autoscaling:ResourceTag/k8s.io/cluster-autoscaler/${module.eks.cluster_id}"
-      values   = ["owned"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "autoscaling:ResourceTag/k8s.io/cluster-autoscaler/enabled"
-      values   = ["true"]
-    }
-  }
-}
-

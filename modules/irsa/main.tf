@@ -1,10 +1,4 @@
-data "aws_region" "current" {}
-
-locals {
-  k8s_service_account_namespace = "kube-system"
-  k8s_service_account_name      = "cluster-autoscaler-aws"
-}
- 
+data "aws_region" "current" {} 
 
 locals {
   aws_account_id = var.aws_account_id != "" ? var.aws_account_id : data.aws_caller_identity.current.account_id
@@ -13,7 +7,7 @@ locals {
     for url in compact(distinct(concat(var.provider_urls, [var.provider_url]))) :
     replace(url, "https://", "")
   ]
-  number_of_role_policy_arns = coalesce(var.number_of_role_policy_arns, length(var.role_policy_arns))
+  number_of_role_policy_arns = coalesce(var.number_of_role_policy_arns, length([aws_iam_policy.cluster_autoscaler.arn]))
 }
 
 data "aws_caller_identity" "current" {}
@@ -70,6 +64,47 @@ data "aws_iam_policy_document" "assume_role_with_oidc" {
   }
 }
 
+resource "helm_release" "cluster-autoscaler" {
+  
+  name             = "cluster-autoscaler"
+  namespace        = local.k8s_service_account_namespace
+  repository       = "https://kubernetes.github.io/autoscaler"
+  chart            = "cluster-autoscaler"
+  version          = "9.10.7"
+  create_namespace = false
+
+  set {
+    name  = "awsRegion"
+    value = data.aws_region.current.name
+  }
+  set {
+    name  = "rbac.serviceAccount.name"
+    value = local.k8s_service_account_name
+  }
+  set {
+    name  = "rbac.serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = element(concat(aws_iam_role.this.*.arn, [""]), 0)
+    type  = "string"
+  }
+  set {
+    name  = "autoDiscovery.clusterName"
+    value = local.name
+  }
+  set {
+    name  = "autoDiscovery.enabled"
+    value = "true"
+  }
+  set {
+    name  = "rbac.create"
+    value = "true"
+  }
+}
+
+locals {
+  name            = var.cluster_name
+  k8s_service_account_namespace = "kube-system"
+  k8s_service_account_name      = "cluster-autoscaler-aws"
+}
 
 resource "aws_iam_role" "this" {
   count = var.create_role ? 1 : 0
@@ -88,10 +123,58 @@ resource "aws_iam_role" "this" {
   tags = var.tags
 }
 
+data "aws_iam_policy_document" "cluster_autoscaler" {
+  statement {
+    sid    = "clusterAutoscalerAll"
+    effect = "Allow"
+
+    actions = [
+      "autoscaling:DescribeAutoScalingGroups",
+      "autoscaling:DescribeAutoScalingInstances",
+      "autoscaling:DescribeLaunchConfigurations",
+      "autoscaling:DescribeTags",
+      "ec2:DescribeLaunchTemplateVersions",
+    ]
+
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "clusterAutoscalerOwn"
+    effect = "Allow"
+
+    actions = [
+      "autoscaling:SetDesiredCapacity",
+      "autoscaling:TerminateInstanceInAutoScalingGroup",
+      "autoscaling:UpdateAutoScalingGroup",
+    ]
+
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "autoscaling:ResourceTag/k8s.io/cluster-autoscaler/${var.cluster_id}"
+      values   = ["owned"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "autoscaling:ResourceTag/k8s.io/cluster-autoscaler/enabled"
+      values   = ["true"]
+    }
+  }
+}
+
+resource "aws_iam_policy" "cluster_autoscaler" {
+  name_prefix = "cluster-autoscaler"
+  description = "EKS cluster-autoscaler policy for cluster var.cluster_id"
+  policy      = data.aws_iam_policy_document.cluster_autoscaler.json
+} 
+
 resource "aws_iam_role_policy_attachment" "custom" {
   count = var.create_role ? local.number_of_role_policy_arns : 0
-
   role       = join("", aws_iam_role.this.*.name)
-  policy_arn = var.role_policy_arns[count.index]
+  policy_arn = [aws_iam_policy.cluster_autoscaler.arn][count.index]
 }
+
 

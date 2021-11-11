@@ -101,3 +101,14 @@ variable "force_detach_policies" {
   default     = false
 }
 
+variable "cluster_name" {
+  description = "Cluster name"
+  type        = string
+  default     = null
+}
+
+variable "cluster_id" {
+  description = "Cluster ID"
+  type        = string
+  default     = null
+}
